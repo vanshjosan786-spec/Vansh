@@ -1,0 +1,61 @@
+name: AnyDesk Remote Desktop
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp:
+    runs-on: windows-latest
+    steps:
+      - name: Configure Windows User Account
+        run: |
+          $Password = ConvertTo-SecureString "YourChosenPassword123" -AsPlainText -Force
+          Set-LocalUser -Name "runneradmin" -Password $Password
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+      - name: Install AnyDesk via Chocolatey
+        run: |
+          choco install anydesk --yes
+
+      - name: Force Automatic Accept & Unattended Access
+        run: |
+          # 1. Stop the AnyDesk service completely to modify system files
+          Stop-Service -Name "AnyDesk" -Force -ErrorAction SilentlyContinue
+          
+          # 2. Set the service password using the binary
+          & "C:\Program Files (x86)\AnyDesk\AnyDesk.exe" --set-password "YourChosenPassword123"
+          
+          # 3. Create config directories if they don't exist yet
+          $systemConfigDir = "$env:ProgramData\AnyDesk"
+          if (!(Test-Path $systemConfigDir)) { New-Item -ItemType Directory -Path $systemConfigDir -Force }
+          
+          # 4. Inject strict configuration rules directly into system.conf
+          # ad.security.interactive_auth=2 -> Completely disables the "Accept/Deny" prompt window
+          # ad.security.allow_unattended=1 -> Forces the system to rely strictly on the password
+          $configPath = "$systemConfigDir\system.conf"
+          Clear-Content -Path $configPath -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "ad.security.interactive_auth=2"
+          Add-Content -Path $configPath -Value "ad.security.allow_unattended=1"
+          Add-Content -Path $configPath -Value "ad.security.allow_audio=1"
+          Add-Content -Path $configPath -Value "ad.security.allow_clip=1"
+          Add-Content -Path $configPath -Value "ad.security.allow_control=1"
+          
+          # 5. Apply the same variables to any pre-existing user configurations
+          $userConfigDir = "$env:AppData\AnyDesk"
+          if (!(Test-Path $userConfigDir)) { New-Item -ItemType Directory -Path $userConfigDir -Force }
+          $userConfigPath = "$userConfigDir\user.conf"
+          Clear-Content -Path $userConfigPath -ErrorAction SilentlyContinue
+          Add-Content -Path $userConfigPath -Value "ad.security.interactive_auth=2"
+          Add-Content -Path $userConfigPath -Value "ad.security.allow_unattended=1"
+
+          # 6. Restart the service to enforce the new rule values
+          Start-Service -Name "AnyDesk"
+
+      - name: Get AnyDesk ID
+        run: |
+          Start-Sleep -s 5
+          & "C:\Program Files (x86)\AnyDesk\AnyDesk.exe" --get-id
+
+      - name: Keep Runner Alive
+        run: |
+          Start-Sleep -s 3600
